@@ -1,8 +1,11 @@
-## Chuddy - Video Download Telegram Bot
+## Chuddy - Your friendly Telegram assistant 🐺🐰
 
 Self-hosted Telegram bot for downloading audio and video from [yt-dlp](https://github.com/yt-dlp/yt-dlp)-supported sites, with OCR and translation features built in.
 
-![download success](.assets/download_success.png)
+Built by [Riley](https://t.me/hicuckomori), Yandex Translation script by [Intruder Alert](https://t.me/weird_autumn).
+
+![the lad himself](.assets/chuddy.jpg)
+![download success](.assets/chuddyv.jpg)
 
 ## Features
 
