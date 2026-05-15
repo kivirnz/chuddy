@@ -1,0 +1,1 @@
+from yt_shared.schemas.progress import ProgressPayload

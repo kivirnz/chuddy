@@ -1,0 +1,90 @@
+services:
+  base-image:
+    image: chuddy-base-image
+    build:
+      dockerfile: base.Dockerfile
+    deploy:
+      mode: replicated
+      replicas: 0
+  chuddy_api:
+    container_name: chuddy_api
+    build:
+      context: .
+      dockerfile: app_api/Dockerfile
+    env_file:
+      - envs/common.env
+      - envs/api.env
+    restart: unless-stopped
+    ports:
+      - "1984:8000"
+    command: bash -c "python start.py && python main.py"
+    depends_on:
+      - chuddy_postgres
+      - chuddy_rabbitmq
+      - chuddy_worker
+      - chuddy_redis
+  chuddy_bot:
+    container_name: chuddy_bot
+    build:
+      context: .
+      dockerfile: app_bot/Dockerfile
+    env_file:
+      - envs/common.env
+      - envs/bot.env
+    restart: unless-stopped
+    command: >
+      bash -c "python start.py && python main.py"
+    depends_on:
+      - chuddy_postgres
+      - chuddy_rabbitmq
+      - chuddy_worker
+      - chuddy_api
+    volumes:
+      - "shared-tmpfs:/tmp/download_tmpfs"
+  chuddy_worker:
+    container_name: chuddy_worker
+    build:
+      context: .
+      dockerfile: app_worker/Dockerfile
+    env_file:
+      - envs/common.env
+      - envs/worker.env
+    restart: unless-stopped
+    command: >
+      bash -c "python start.py && alembic upgrade head && python main.py"
+    depends_on:
+      - chuddy_postgres
+      - chuddy_rabbitmq
+    volumes:
+      - "./files:/filestorage"
+      - "shared-tmpfs:/tmp/download_tmpfs"
+  chuddy_postgres:
+    container_name: chuddy_postgres
+    image: "postgres:15"
+    env_file:
+      - envs/common.env
+    ports:
+      - "5435:5432"
+    restart: unless-stopped
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+  chuddy_rabbitmq:
+    image: "rabbitmq:3.12-management-alpine"
+    container_name: chuddy_rabbitmq
+    ports:
+      - "25672:5672"
+      - "15672:15672"
+    restart: unless-stopped
+  chuddy_redis:
+    image: "redis:alpine"
+    container_name: chuddy_redis
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  shared-tmpfs:
+    driver: local
+    driver_opts:
+      type: "tmpfs"
+      device: "tmpfs"
+      o: "size=27168m,uid=1000"
