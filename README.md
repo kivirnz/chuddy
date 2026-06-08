@@ -2,7 +2,9 @@
 
 Self-hosted Telegram bot for downloading audio and video from [yt-dlp](https://github.com/yt-dlp/yt-dlp)-supported sites, with OCR and translation features built in.
 
-This bot was made to be of use to my friends group chat, I apologise in advance for any crudeness in the source code, this isn't really meant to be deployed elsewhere.
+This bot was made to be of use to my friends group chat, I apologise in advance for any crudeness in the source code, this isn't really meant to be deployed elsewhere but I'm not gonna stop you.
+
+<img src=".assets/chuddy.jpg" alt="My beautiful chudling son" height="256" width="256"></img>
 
 ## Features
 
@@ -154,10 +156,6 @@ User → Telegram → Pyrogram Bot → yt-dlp → Upload
 | FastAPI REST service | **Removed** |
 | Separate worker process | **Merged into bot** |
 | ~80+ files across 4 packages | **14 Python files** |
-
-## Disclaimer
-
-This tool is intended for use only with content that you have the right to download, such as Creative Commons licensed media.
 
 ## License
 
