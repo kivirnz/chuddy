@@ -1,0 +1,25 @@
+services:
+  chuddy:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: chuddy
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - "./config.yml:/app/config.yml:ro"
+      - "./cookies:/app/cookies"
+      - "chuddy-data:/data"
+      - "chuddy-tmpfs:/tmp/download_tmpfs"
+      - "./files:/filestorage"
+
+volumes:
+  chuddy-data:
+    driver: local
+  chuddy-tmpfs:
+    driver: local
+    driver_opts:
+      type: "tmpfs"
+      device: "tmpfs"
+      o: "size=27168m"

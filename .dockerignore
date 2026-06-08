@@ -1,0 +1,25 @@
+**/*.session*
+.editorconfig
+.assets
+.dockerignore
+.github
+.gitignore
+.ruff_cache
+.releases
+LICENSE
+README.md
+rsync_exclude.txt
+rsync.sh
+**/.venv*
+**/.python-version
+
+# Old app directories (no longer used)
+app_api/
+app_bot/
+app_worker/
+yt_shared/
+envs/
+base.Dockerfile
+
+# Backups
+*.bak
