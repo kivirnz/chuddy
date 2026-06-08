@@ -1,8 +1,8 @@
-# Chuddy - Media Download Telegram Bot
+# Chuddy - God's most retarded Telegram bot
 
 Self-hosted Telegram bot for downloading audio and video from [yt-dlp](https://github.com/yt-dlp/yt-dlp)-supported sites, with OCR and translation features built in.
 
-**Single container, zero bloat.** No Postgres, no RabbitMQ, no Redis. Just SQLite and direct async calls.
+This bot was made to be of use to my friends group chat, I apologise in advance for any crudeness in the source code, this isn't really meant to be deployed elsewhere.
 
 ## Features
 
@@ -16,7 +16,6 @@ Self-hosted Telegram bot for downloading audio and video from [yt-dlp](https://g
 - Video compression for oversized files
 - STFU mode — minimal output with reactions only
 - File caching (Telegram file_id dedup via SQLite)
-- Punk mode with custom chat interactions
 
 ## Prerequisites
 
@@ -74,7 +73,6 @@ Your bot will send a "Chuddy online" message once ready.
 | `.tr` (reply to message) | Translate replied text to English |
 | `.ocr` (on/reply to image) | OCR + translate image text to English |
 | `.help` | Show help menu |
-| `.punk` | Toggle punk mode (admin only, groups) |
 | `stfu chuddy` | Toggle minimal output mode (reactions only) |
 | `/add <chat_id>` | Add chat to allow list (admin) |
 | `/remove <chat_id>` | Remove chat from allow list (admin) |
@@ -127,22 +125,6 @@ Edit `chuddy/ytdl_opts.py` to change default download options or add per-host co
 ### Adding extra users
 
 Edit `user_ids.txt` — one user ID per line. Lines starting with `#` are ignored. Users from this file get default configuration.
-
-## Punk Mode
-
-When enabled in a group chat with `.punk` (admin only), the bot responds to casual messages:
-
-| Trigger | Response |
-|---------|----------|
-| `good bot` | Compliment reply |
-| `bad bot` | Insult reply |
-| `I'm <word>` | "Hi \<word\>, I'm Chuddy" |
-| `milk` | Random milk image |
-| `furry` / `furries` | Random line from `tfd.txt` |
-| `prolly` | Random percentage |
-| `laptop` | "Lenovo Thinkpad X62" |
-| Slash commands (`/arsen_*`, etc.) | Tracks first occurrence per month/day |
-| PDF attachment | Scans for embedded JavaScript |
 
 ## STFU Mode
 
