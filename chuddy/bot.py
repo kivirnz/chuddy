@@ -658,8 +658,14 @@ class ChuddyBot(Client):
         os.close(input_fd)
         os.close(output_fd)
 
+        actual_input = None
         try:
-            await self.download_media(photo_message, file_name=input_path)
+            actual_input = await self.download_media(photo_message, file_name=input_path)
+            if not actual_input:
+                self._log.error('download_media returned None for OCR photo')
+                if status_msg:
+                    await status_msg.edit_text('Failed to process image.')
+                return
 
             script_path = _YANDEX_DIR / 'yandex-trans.py'
             if not script_path.exists():
@@ -668,7 +674,7 @@ class ChuddyBot(Client):
                 return
 
             proc = await asyncio.create_subprocess_exec(
-                'python3', str(script_path), input_path, output_path,
+                'python3', str(script_path), actual_input, output_path,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=str(_YANDEX_DIR),
@@ -686,7 +692,7 @@ class ChuddyBot(Client):
                     await status_msg.edit_text('Failed to process image.')
                 return
 
-            await message.reply_photo(output_path, reply_to_message_id=photo_message.id)
+            await message.reply_photo(photo=output_path, reply_to_message_id=photo_message.id)
             if status_msg:
                 await status_msg.delete()
         except Exception:
@@ -694,7 +700,10 @@ class ChuddyBot(Client):
             if status_msg:
                 await status_msg.edit_text('Failed to process image.')
         finally:
-            for path in (input_path, output_path):
+            cleanup_paths = {input_path, output_path}
+            if actual_input:
+                cleanup_paths.add(actual_input)
+            for path in cleanup_paths:
                 try:
                     os.remove(path)
                 except OSError:
@@ -783,7 +792,11 @@ class ChuddyBot(Client):
 
         # laptop
         if re.search(r'\blaptop\b', text_lower):
-            await message.reply('Lenovo Thinkpad X62')
+            if random.random() < 0.5:
+                brand = random.choice(['Lenovo', 'IBM'])
+                series = random.choice(['X', 'W', 'T'])
+                num = random.randint(100, 999)
+                await message.reply(f'{brand} Thinkpad {series}{num}')
             return
 
         # PDF
