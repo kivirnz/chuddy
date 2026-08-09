@@ -12,7 +12,7 @@ from pyrogram.types import Message
 from chuddy.config import BotConfig, settings
 from chuddy.models import Audio, Video, BaseMedia
 from chuddy.stfu import is_stfu
-from chuddy.utils import bold, format_bytes, remove_dir
+from chuddy.utils import bold, format_bytes, remove_dir, sanitize_url
 
 if False:  # type-only import
     from chuddy.bot import ChuddyBot
@@ -301,7 +301,7 @@ class Uploader:
 
         # STFU mode: URL only
         if self._ctx.from_chat_id and is_stfu(self._ctx.from_chat_id):
-            return self._ctx.url
+            return sanitize_url(self._ctx.url)
 
         c = self._ctx
         if c.include_title and isinstance(self._ctx.media, (Video, Audio)):
@@ -309,7 +309,7 @@ class Uploader:
         if c.include_filename:
             items.append(self._ctx.media.current_filename)
         if c.include_link:
-            items.append(self._ctx.url)
+            items.append(sanitize_url(self._ctx.url))
         if c.include_size:
             items.append(self._ctx.media.file_size_human())
 

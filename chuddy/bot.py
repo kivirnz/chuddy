@@ -23,7 +23,7 @@ from chuddy.media import MediaService
 from chuddy.models import DownloadContext
 from chuddy.stfu import is_stfu, toggle_stfu
 from chuddy.uploader import Uploader, UploadContext, _progress_bar
-from chuddy.utils import bold, extract_urls, filter_urls, format_bytes, preprocess_url, remove_dir
+from chuddy.utils import bold, extract_urls, filter_urls, format_bytes, preprocess_url, remove_dir, sanitize_url
 from chuddy.ytdl_opts import HostConfig
 
 logger = logging.getLogger(__name__)
@@ -460,12 +460,27 @@ class ChuddyBot(Client):
                 self._log.debug('No URLs matched validation regexes')
                 return
 
-        # Send ack
-        ack = await self._send_ack(message, len(urls), reply_target_id)
-
-        # Process each URL
+        # Expand any playlist URLs into their individual entries so each video
+        # is uploaded separately instead of being collapsed into one.
+        from chuddy import streamer
+        loop = asyncio.get_running_loop()
+        queue: list[tuple[str, DownMediaType]] = []
         for url in urls:
             media_type = url_media_types.get(preprocess_url(url), user_conf.download_media_type)
+            try:
+                entries = await loop.run_in_executor(
+                    None, streamer.expand_playlist, preprocess_url(url)
+                )
+            except Exception:
+                entries = [url]
+            for sub in entries:
+                queue.append((sub, media_type))
+
+        # Send ack
+        ack = await self._send_ack(message, len(queue), reply_target_id)
+
+        # Process each URL
+        for url, media_type in queue:
             if media_type == DownMediaType.VIDEO:
                 await self._stream_video(
                     message=message,
@@ -624,8 +639,9 @@ class ChuddyBot(Client):
     def _stream_caption(
         url: str, info, size: int, filename: str, user_conf: UserConf, stfu: bool
     ) -> str:
+        link = sanitize_url(url)
         if stfu:
-            return url
+            return link
         items: list[str] = []
         cap = user_conf.upload.video_caption
         if cap.include_title and info.title:
@@ -633,7 +649,7 @@ class ChuddyBot(Client):
         if cap.include_filename:
             items.append(filename)
         if cap.include_link:
-            items.append(url)
+            items.append(link)
         if cap.include_size:
             items.append(format_bytes(size))
         return '\n'.join(items)[:settings.TG_MAX_CAPTION_SIZE]

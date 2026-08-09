@@ -6,7 +6,7 @@ import re
 import secrets
 import string
 from pathlib import Path
-from urllib.parse import urljoin, urlparse
+from urllib.parse import parse_qs, urljoin, urlparse, urlsplit
 
 logger = logging.getLogger(__name__)
 
@@ -100,6 +100,52 @@ def filter_urls(urls: list[str], regexes: list[str]) -> list[str]:
                 valid.append(url)
                 break
     return list(dict.fromkeys(valid))
+
+
+# ── URL sanitization ─────────────────────────────────────────────────
+
+_YOUTUBE_HOSTS = {
+    'www.youtube.com', 'youtube.com', 'm.youtube.com',
+    'music.youtube.com', 'youtu.be',
+}
+_YOUTUBE_ID_RE = re.compile(r'^[A-Za-z0-9_-]{11}$')
+_YOUTUBE_PATH_PREFIXES = ('shorts', 'embed', 'live', 'v')
+
+
+def sanitize_url(url: str) -> str:
+    """Normalize a media URL to a clean canonical form for display.
+
+    YouTube watch/shorts/live/embed URLs collapse to ``https://youtu.be/<id>``;
+    all other URLs are returned unchanged.
+    """
+    try:
+        parts = urlsplit(url)
+    except Exception:
+        return url
+    if parts.netloc.lower() in _YOUTUBE_HOSTS:
+        video_id = _extract_youtube_id(parts)
+        if video_id:
+            return f'https://youtu.be/{video_id}'
+    return url
+
+
+def _extract_youtube_id(parts) -> str | None:
+    host = parts.netloc.lower()
+    if host == 'youtu.be':
+        vid = parts.path.strip('/').split('/')[0]
+        return vid if _YOUTUBE_ID_RE.match(vid) else None
+
+    qs = parse_qs(parts.query)
+    if qs.get('v'):
+        vid = qs['v'][0]
+        if _YOUTUBE_ID_RE.match(vid):
+            return vid
+
+    segs = [s for s in parts.path.split('/') if s]
+    if len(segs) >= 2 and segs[0] in _YOUTUBE_PATH_PREFIXES:
+        if _YOUTUBE_ID_RE.match(segs[1]):
+            return segs[1]
+    return None
 
 
 # ── yt-dlp helpers ───────────────────────────────────────────────────

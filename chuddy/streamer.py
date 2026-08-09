@@ -40,6 +40,10 @@ STREAM_FORMAT_SELECTOR = (
 
 _FRAGMENTED_PROTOCOLS = {'m3u8', 'm3u8_native', 'http_dash_segments'}
 
+# Cap how many items a single playlist expands to, so an enormous playlist
+# can't flood a chat with hundreds of uploads.
+_MAX_PLAYLIST_ENTRIES = 50
+
 # Bound the in-memory prefetch so big videos don't blow up RAM, while keeping
 # enough buffered that Pyrogram's synchronous reads almost never stall.
 _MAX_BUFFER_BYTES = 64 * 1024 * 1024
@@ -273,6 +277,63 @@ def safe_filename(title: str, ext: str) -> str:
     name = name[:120]
     ext = (ext or 'mp4').lower().strip('.')
     return f'{name}.{ext}'
+
+
+def expand_playlist(url: str) -> list[str]:
+    """Expand a playlist URL into its individual video URLs.
+
+    Returns ``[url]`` when *url* is not a playlist (or resolution fails), so
+    callers can always iterate the result. Only true playlist URLs are expanded;
+    a ``watch?v=X&list=Y`` link is left as a single video to match share intent.
+    """
+    opts: dict[str, Any] = {
+        'quiet': True,
+        'no_warnings': True,
+        'skip_download': True,
+        'noplaylist': True,
+        'extract_flat': True,
+        'allow_playlist_files': False,
+        'noprogress': True,
+    }
+    cookies = get_cookies_file()
+    if cookies:
+        opts['cookiefile'] = str(cookies)
+
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+    except Exception:
+        logger.debug('Playlist expand failed for %s', url, exc_info=True)
+        return [url]
+
+    if not info or info.get('_type') != 'playlist':
+        return [url]
+
+    out: list[str] = []
+    for entry in info.get('entries') or []:
+        if entry is None:
+            continue
+        entry_url = _entry_url(entry)
+        if entry_url and entry_url not in out:
+            out.append(entry_url)
+        if len(out) >= _MAX_PLAYLIST_ENTRIES:
+            logger.info('Playlist %s truncated to %d entries', url, _MAX_PLAYLIST_ENTRIES)
+            break
+
+    return out or [url]
+
+
+def _entry_url(entry: dict[str, Any]) -> str | None:
+    """Resolve a flat-playlist entry to a standalone media URL."""
+    if entry.get('url'):
+        return entry['url']
+    ie_key = (entry.get('ie_key') or '').lower()
+    entry_id = entry.get('id')
+    if not entry_id:
+        return None
+    if ie_key == 'youtube':
+        return f'https://www.youtube.com/watch?v={entry_id}'
+    return None
 
 
 class StreamingFile(io.IOBase):

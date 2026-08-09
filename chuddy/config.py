@@ -162,16 +162,12 @@ def load_config(config_path: str | Path | None = None) -> BotConfig:
     with open(config_path) as f:
         raw = yaml.safe_load(f)
 
-    # Merge user_ids.txt. The primary location is the package directory
-    # (chuddy/user_ids.txt) since that is the file shipped into the container
-    # by the Dockerfile; the repo-root copy is honoured for backward compat.
-    user_ids_candidates = [
-        Path(__file__).parent / 'user_ids.txt',
-        config_path.parent / 'user_ids.txt',
-    ]
-    for uid_file in user_ids_candidates:
-        if uid_file.is_file():
-            raw = _merge_user_ids(raw, uid_file)
+    # Merge chuddy/user_ids.txt — one Telegram user ID per line. Users listed
+    # here get direct DM access to all of the bot's features. This path is used
+    # because the Dockerfile copies the chuddy/ package into the image.
+    user_ids_file = Path(__file__).parent / 'user_ids.txt'
+    if user_ids_file.is_file():
+        raw = _merge_user_ids(raw, user_ids_file)
 
     config = BotConfig(**raw)
     logger.info('Loaded config: %d user(s)/chat(s)', len(config.telegram.allowed_users))
