@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from pyrogram import Client, filters
-from pyrogram.enums import ChatType, ParseMode
+from pyrogram.enums import ChatAction, ChatType, ParseMode
 from pyrogram.handlers import MessageHandler
 from pyrogram.types import Message
 
@@ -22,8 +22,8 @@ from chuddy.enums import DownMediaType
 from chuddy.media import MediaService
 from chuddy.models import DownloadContext
 from chuddy.stfu import is_stfu, toggle_stfu
-from chuddy.uploader import Uploader, UploadContext
-from chuddy.utils import bold, extract_urls, filter_urls, preprocess_url, remove_dir
+from chuddy.uploader import Uploader, UploadContext, _progress_bar
+from chuddy.utils import bold, extract_urls, filter_urls, format_bytes, preprocess_url, remove_dir
 from chuddy.ytdl_opts import HostConfig
 
 logger = logging.getLogger(__name__)
@@ -35,18 +35,23 @@ _MILK_DIR = _BASE_DIR / 'milk'
 _TFD_FILE = _BASE_DIR / 'tfd.txt'
 _YANDEX_DIR = _BASE_DIR / 'yandex'
 _TRACKER_FILE = _BASE_DIR / 'command_tracker.json'
+_NN_FILE = _BASE_DIR / 'nn.jpg'
 
 # ── Punk mode constants ──────────────────────────────────────────────
 
 _PUNK_SLASH_COMMANDS = {
     '/intruder_self_deprecation',
+    '/intruder_heightism',
     '/yaman_phone_laptop',
+    '/yaman_end_it_all',
+    '/yaman_unfunny_reel',
+    '/yaman_settings_page',
     '/arsen_configoored',
-    '/arsen_didnt_fuck',
     '/arsen_mentioned_nix',
-    '/arsen_vs_ansi',
     '/arsen_mentioned_fp',
     '/arsen_mentioned_ai',
+    '/ansi_didnt_fuck',
+    '/henkka_reinstalled_os',
 }
 
 _GOOD_BOT_REPLIES = [
@@ -325,11 +330,11 @@ class ChuddyBot(Client):
 
     async def _on_stfu(self, _, message: Message):
         chat_id = message.chat.id
-        new_state = toggle_stfu(chat_id)
+        toggle_stfu(chat_id)
         try:
-            await message.react('🌭')
+            await message.reply('з:')
         except Exception:
-            self._log.debug('Failed to react to stfu toggle')
+            self._log.debug('Failed to reply to stfu toggle')
 
     async def _on_debug(self, _, message: Message):
         chat_id = message.chat.id
@@ -461,14 +466,242 @@ class ChuddyBot(Client):
         # Process each URL
         for url in urls:
             media_type = url_media_types.get(preprocess_url(url), user_conf.download_media_type)
-            await self._download_and_upload(
-                message=message,
-                url=url,
-                media_type=media_type,
-                user_conf=user_conf,
-                ack_message=ack,
-                reply_target_id=reply_target_id,
+            if media_type == DownMediaType.VIDEO:
+                await self._stream_video(
+                    message=message,
+                    url=url,
+                    user_conf=user_conf,
+                    ack_message=ack,
+                    reply_target_id=reply_target_id,
+                )
+            else:
+                await self._download_and_upload(
+                    message=message,
+                    url=url,
+                    media_type=media_type,
+                    user_conf=user_conf,
+                    ack_message=ack,
+                    reply_target_id=reply_target_id,
+                )
+
+    # ── Streaming video pipeline ──────────────────────────────────────
+
+    async def _stream_video(
+        self,
+        message: Message,
+        url: str,
+        user_conf: UserConf,
+        ack_message: Message | None,
+        reply_target_id: int,
+    ):
+        """Stream a video URL straight into Telegram without a full disk download.
+
+        Falls back to the legacy download-then-upload pipeline when the source
+        can't be streamed as a single file (HLS/DASH) or its size is unknown.
+        """
+        from chuddy import streamer
+
+        chat_id = message.chat.id
+        stfu = is_stfu(chat_id)
+        loop = asyncio.get_running_loop()
+
+        stream_file = None
+        thumb_path: Path | None = None
+        progress_msg: Message | None = None
+        processed = preprocess_url(url)
+
+        try:
+            if not stfu:
+                try:
+                    await self.send_chat_action(chat_id, action='typing')
+                except Exception:
+                    pass
+
+            info = await asyncio.wait_for(
+                loop.run_in_executor(None, streamer.extract_stream, processed),
+                timeout=120,
             )
+
+            if info is None or not info.streamable or not info.url:
+                self._log.info('Source not streamable (%s), falling back to legacy pipeline', url)
+                await self._download_and_upload(
+                    message=message,
+                    url=url,
+                    media_type=DownMediaType.VIDEO,
+                    user_conf=user_conf,
+                    ack_message=ack_message,
+                    reply_target_id=reply_target_id,
+                )
+                return
+
+            size = info.filesize
+            if not size:
+                size = await loop.run_in_executor(None, streamer.resolve_size, info.url, info.http_headers)
+            if not size or size <= 0:
+                self._log.info('Could not determine stream size (%s), falling back', url)
+                await self._download_and_upload(
+                    message=message,
+                    url=url,
+                    media_type=DownMediaType.VIDEO,
+                    user_conf=user_conf,
+                    ack_message=ack_message,
+                    reply_target_id=reply_target_id,
+                )
+                return
+
+            thumb_path = await loop.run_in_executor(None, streamer.prepare_thumbnail, info.thumb_url)
+
+            filename = streamer.safe_filename(info.title, info.ext)
+            caption = self._stream_caption(url, info, size, filename, user_conf, stfu)
+
+            stream_file = streamer.StreamingFile(info.url, size, headers=info.http_headers, name=filename)
+
+            if not stfu:
+                progress_msg = await self._send_stream_progress(
+                    chat_id, reply_target_id, filename, size
+                )
+
+            try:
+                await self.send_chat_action(chat_id, action=ChatAction.UPLOAD_VIDEO)
+            except Exception:
+                pass
+
+            async with self._semaphore:
+                sent = await self.send_video(
+                    chat_id=chat_id,
+                    video=stream_file,
+                    caption=caption,
+                    file_name=filename,
+                    duration=int(info.duration or 0),
+                    height=int(info.height or 0),
+                    width=int(info.width or 0),
+                    thumb=str(thumb_path) if thumb_path else None,
+                    supports_streaming=True,
+                    parse_mode=ParseMode.DISABLED,
+                    progress=self._stream_progress,
+                    progress_args=(chat_id, progress_msg, filename, size, stream_file),
+                    reply_to_message_id=reply_target_id,
+                )
+
+            if stfu and reply_target_id:
+                try:
+                    await self.send_reaction(chat_id=chat_id, message_id=reply_target_id, emoji='🌭')
+                except Exception:
+                    self._log.debug('Failed to react after stream upload')
+
+            if sent and sent.video:
+                try:
+                    await self._record_stream_file(processed, info, size, sent, message)
+                except Exception:
+                    self._log.debug('Failed to record streamed file')
+
+        except Exception as e:
+            self._log.exception('Streaming upload failed for %s', url)
+            await self._handle_error(message, url, e, stfu)
+        finally:
+            if stream_file is not None:
+                try:
+                    stream_file.close()
+                except Exception:
+                    pass
+            if thumb_path is not None:
+                try:
+                    thumb_path.unlink(missing_ok=True)
+                except Exception:
+                    pass
+            if progress_msg is not None:
+                try:
+                    await self.delete_messages(chat_id, [progress_msg.id])
+                except Exception:
+                    pass
+            if ack_message is not None:
+                try:
+                    await self.delete_messages(chat_id, [ack_message.id])
+                except Exception:
+                    pass
+
+    @staticmethod
+    def _stream_caption(
+        url: str, info, size: int, filename: str, user_conf: UserConf, stfu: bool
+    ) -> str:
+        if stfu:
+            return url
+        items: list[str] = []
+        cap = user_conf.upload.video_caption
+        if cap.include_title and info.title:
+            items.append(info.title)
+        if cap.include_filename:
+            items.append(filename)
+        if cap.include_link:
+            items.append(url)
+        if cap.include_size:
+            items.append(format_bytes(size))
+        return '\n'.join(items)[:settings.TG_MAX_CAPTION_SIZE]
+
+    async def _send_stream_progress(
+        self, chat_id: int, reply_to: int, filename: str, size: int
+    ) -> Message | None:
+        text = (
+            f'⬆️ {bold("Streaming")} {filename}\n'
+            f'📏 {bold("Size")} {format_bytes(size)}\n'
+            f'{_progress_bar(0)} 0.0%'
+        )
+        try:
+            return await self.send_message(
+                chat_id, text, parse_mode=ParseMode.HTML, reply_to_message_id=reply_to
+            )
+        except Exception:
+            return None
+
+    async def _stream_progress(
+        self, current: int, total: int, chat_id: int, progress_msg: Message | None,
+        filename: str, size: int, stream_file,
+    ) -> None:
+        if is_stfu(chat_id) or progress_msg is None:
+            return
+        now = asyncio.get_event_loop().time()
+        last = getattr(progress_msg, '_chuddy_last', 0.0)
+        if now - last < 1.5 and current < total:
+            return
+        setattr(progress_msg, '_chuddy_last', now)
+
+        pct = (current / total * 100) if total else 0
+        fetched = getattr(stream_file, 'fetched', 0) or 0
+        dl_pct = (fetched / total * 100) if total else 0
+        text = (
+            f'⬆️ {bold("Streaming")} {filename}\n'
+            f'📏 {bold("Size")} {format_bytes(size)}\n'
+            f'{_progress_bar(pct)} {pct:.1f}% uploaded  |  ⬇️ {dl_pct:.1f}% fetched'
+        )
+        try:
+            await self.edit_message_text(chat_id, progress_msg.id, text, parse_mode=ParseMode.HTML)
+        except Exception:
+            pass
+
+    async def _record_stream_file(self, url: str, info, size: int, sent: Message, message: Message):
+        """Persist a lightweight task/file record for streamed uploads."""
+        try:
+            task_id, _ = await db.task_get_or_create(
+                url=url,
+                source='BOT',
+                from_chat_id=message.chat.id,
+                from_user_id=message.from_user.id if message.from_user else None,
+                message_id=sent.id,
+            )
+            await db.task_set_status(task_id, 'DONE')
+            file = sent.video
+            await db.file_create(
+                task_id=task_id,
+                file_type='VIDEO',
+                filename=getattr(file, 'file_name', None) or info.title,
+                file_size=getattr(file, 'file_size', None) or size,
+                duration=info.duration,
+                width=info.width,
+                height=info.height,
+                title=info.title,
+            )
+        except Exception:
+            self._log.debug('Stream file record failed', exc_info=True)
 
     # ── Download & Upload pipeline ───────────────────────────────────
 
@@ -738,6 +971,14 @@ class ChuddyBot(Client):
             return
 
         text_lower = text.lower()
+
+        # Hacker News / Y Combinator -> reply with nn.jpg
+        if 'ycombinator.com' in text_lower and _NN_FILE.exists():
+            try:
+                await message.reply_photo(str(_NN_FILE), reply_to_message_id=message.id)
+            except Exception:
+                self._log.debug('Failed to reply with nn.jpg')
+            return
 
         # Slash commands
         command = text.strip().split()[0].lower().split('@')[0]
