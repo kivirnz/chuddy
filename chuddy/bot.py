@@ -974,9 +974,43 @@ class ChuddyBot(Client):
         else:
             await message.reply('Goodbye :c')
 
+    @staticmethod
+    def _has_ycombinator_link(message: Message) -> bool:
+        """True if the message references ycombinator.com anywhere.
+
+        Covers the raw body text, hyperlinks whose visible text hides the URL
+        (Telegram ``text_link`` entities), and standalone link previews.
+        """
+        candidates: list[str] = []
+
+        body = message.text or message.caption or ''
+        if body:
+            candidates.append(body.lower())
+
+        for ent in (message.entities or []) + (message.caption_entities or []):
+            url = getattr(ent, 'url', None)
+            if url:
+                candidates.append(url.lower())
+
+        preview = getattr(message, 'link_preview_options', None)
+        if preview and getattr(preview, 'url', None):
+            candidates.append(preview.url.lower())
+
+        return any('ycombinator.com' in c for c in candidates)
+
     async def _on_punk(self, _, message: Message):
         chat_id = message.chat.id
         if not self._punk.is_enabled(chat_id):
+            return
+
+        # Hacker News / Y Combinator -> reply with nn.jpg. Matches the URL
+        # whether it shows as plain text, a hyperlink whose display text hides
+        # the actual URL, or a standalone link preview.
+        if _NN_FILE.exists() and self._has_ycombinator_link(message):
+            try:
+                await message.reply_photo(str(_NN_FILE), reply_to_message_id=message.id)
+            except Exception:
+                self._log.debug('Failed to reply with nn.jpg')
             return
 
         text = message.text or message.caption or ''
@@ -987,14 +1021,6 @@ class ChuddyBot(Client):
             return
 
         text_lower = text.lower()
-
-        # Hacker News / Y Combinator -> reply with nn.jpg
-        if 'ycombinator.com' in text_lower and _NN_FILE.exists():
-            try:
-                await message.reply_photo(str(_NN_FILE), reply_to_message_id=message.id)
-            except Exception:
-                self._log.debug('Failed to reply with nn.jpg')
-            return
 
         # Slash commands
         command = text.strip().split()[0].lower().split('@')[0]
