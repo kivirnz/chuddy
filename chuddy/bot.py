@@ -37,6 +37,15 @@ _YANDEX_DIR = _BASE_DIR / 'yandex'
 _TRACKER_FILE = _BASE_DIR / 'command_tracker.json'
 _NN_FILE = _BASE_DIR / 'nn.jpg'
 
+# Auto-retry flood waits up to this many seconds (default is 10, which lets a
+# 20s SendMessage flood wait crash the request). Bumped so bursts from playlist
+# expansion are slept through instead of raising FloodWait.
+_FLOOD_SLEEP_THRESHOLD = 60
+
+# Delay between successive uploads when a single request expands into several
+# items (a playlist, or several URLs at once), so we don't trip flood control.
+_UPLOAD_PACE_SECONDS = 3
+
 # ── Punk mode constants ──────────────────────────────────────────────
 
 _PUNK_SLASH_COMMANDS = {
@@ -173,6 +182,7 @@ class ChuddyBot(Client):
             api_hash=config.telegram.api_hash,
             bot_token=config.telegram.token,
             lang_code=config.telegram.lang_code,
+            sleep_threshold=_FLOOD_SLEEP_THRESHOLD,
         )
         self._log = logging.getLogger(self.__class__.__name__)
         self.config = config
@@ -479,8 +489,12 @@ class ChuddyBot(Client):
         # Send ack
         ack = await self._send_ack(message, len(queue), reply_target_id)
 
-        # Process each URL
-        for url, media_type in queue:
+        # Process each URL. When a single request expands into several items
+        # (a playlist or several pasted URLs), pace the uploads so we don't
+        # trip Telegram's flood control between sends.
+        for idx, (url, media_type) in enumerate(queue):
+            if idx > 0 and len(queue) > 1:
+                await asyncio.sleep(_UPLOAD_PACE_SECONDS)
             if media_type == DownMediaType.VIDEO:
                 await self._stream_video(
                     message=message,
